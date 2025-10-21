@@ -1,42 +1,65 @@
-# Michaux Nicolas
+# 🧠 TP Réseau — Accès externe & Firewall Linux
+## Rendu — Michaux Nicolas
 
-## conf hôte
+## Phase 1 — VM accessible depuis l’extérieur (sans firewall)
+### Architecture
+- Hôte : wlan0 = 10.33.79.98/20, vboxnet0 = 192.168.56.1/24
+
+- VM Web : 192.168.56.103/24 (Host-Only), service HTTP sur :80
+### Règles hôte (nftables)
 ```bash
 sudo nft add table ip nat 2>/dev/null || true
 sudo nft 'add chain ip nat prerouting  { type nat hook prerouting  priority -100; }' 2>/dev/null || true
 sudo nft 'add chain ip nat postrouting { type nat hook postrouting priority  100; }' 2>/dev/null || true
 sudo nft 'add chain ip nat output      { type nat hook output      priority -100; }' 2>/dev/null || true
-sudo nft add rule ip nat prerouting  iif "wlan0" tcp dport 80 dnat to 192.168.56.103:80
-sudo nft add rule ip nat output      ip daddr 10.33.79.98 tcp dport 80 dnat to 192.168.56.103:80
-sudo nft add rule ip nat postrouting oif "wlan0" ip saddr 192.168.56.0/24 masquerade
+
+# Publier http://10.33.79.98 -> VM Web directe (192.168.56.103:80)
+sudo nft 'add rule ip nat prerouting iif "wlan0" tcp dport 80 dnat to 192.168.56.103:80'
+sudo nft 'add rule ip nat output ip daddr 10.33.79.98 tcp dport 80 dnat to 192.168.56.103:80'  # hairpin pour tester depuis l’hôte
+sudo nft 'add rule ip nat postrouting oif "wlan0" ip saddr 192.168.56.0/24 masquerade'
+
 sudo nft add table ip filter 2>/dev/null || true
 sudo nft 'add chain ip filter forward { type filter hook forward priority 0; policy drop; }' 2>/dev/null || true
-sudo nft add rule ip filter forward ct state established,related accept
-sudo nft add rule ip filter forward iif "wlan0" oif "vboxnet0" ip daddr 192.168.56.103 tcp dport 80 ct state new accept
-sudo nft add rule ip filter forward iif "vboxnet0" oif "wlan0" ct state established,related accept
-sudo nft 'add rule ip nat postrouting oif "vboxnet0" ip daddr 192.168.56.103 tcp dport 80 snat to 192.168.56.1'
+sudo nft 'add rule ip filter forward ct state established,related accept'
+sudo nft 'add rule ip filter forward iif "wlan0"  oif "vboxnet0" ip daddr 192.168.56.103 tcp dport 80 ct state new accept'
+sudo nft 'add rule ip filter forward iif "vboxnet0" oif "wlan0" ct state established,related accept'
 ```
-
+### Test : depuis un autre poste sur le Wi-Fi → http://10.33.79.98/ ✅
 ![testsite](image/testsite.jpg)
 
+## Phase 2 — Ajout d’un Firewall/Routeur entre Hôte et Web
+### Nouvelle archi
+```
+[Hôte] → [VM Firewall] → [VM Web]
+```
+- Hôte : inchangé
+- VM Firewall
+    - enp0s3 (Host-Only) = 192.168.56.104/24 (WAN côté hôte)
 
-##  Phase 2 — Ajouter un pare-feu / routeur Linux en frontal
+    - enp0s8 (Internal int-lan) = 10.10.0.1/24 (LAN)
 
-hôte
+    - enp0s9 (NAT VBox) = 10.0.4.15/24, GW 10.0.4.2 (sortie Internet)
+- VM Web : 10.10.0.10/24, GW 10.10.0.1
+
+### Hôte (publier vers le firewall, plus vers la web directe)
 ```bash
 sudo sysctl -w net.ipv4.ip_forward=1
-sudo nft flush chain ip nat prerouting
-sudo nft flush chain ip nat postrouting
-sudo nft flush chain ip nat output
-sudo nft flush chain ip filter forward
-sudo nft 'add rule ip nat prerouting  iif "wlan0" tcp dport 80 dnat to 192.168.56.104:80'
+
+# DNAT Wi-Fi -> WAN firewall
+sudo nft 'flush chain ip nat prerouting'
+sudo nft 'flush chain ip nat postrouting'
+sudo nft 'flush chain ip nat output'
+sudo nft 'flush chain ip filter forward'
+
+sudo nft 'add rule ip nat prerouting iif "wlan0" tcp dport 80 dnat to 192.168.56.104:80'
 sudo nft 'add rule ip nat output ip daddr 10.33.79.98 tcp dport 80 dnat to 192.168.56.104:80'
 sudo nft 'add rule ip nat postrouting oif "wlan0" ip saddr 192.168.56.0/24 masquerade'
+
 sudo nft 'add rule ip filter forward ct state established,related accept'
 sudo nft 'add rule ip filter forward iif "wlan0"  oif "vboxnet0" ip daddr 192.168.56.104 tcp dport 80 ct state new accept'
 sudo nft 'add rule ip filter forward iif "vboxnet0" oif "wlan0" ct state established,related accept'
 ```
-serveur web
+### VM Web (réseau)
 ```bash
 auto enp0s3
 allow-hotplug enp0s3
@@ -45,32 +68,63 @@ iface enp0s3 inet static
   gateway 10.10.0.1
   dns-nameservers 10.10.0.1 1.1.1.1
 ```
-serveur routeur
+### VM Firewall (routage + NAT + filtrage)
+
 ```bash
-echo 'net.ipv4.ip_forward=1' | tee /etc/sysctl.d/99-ipforward.conf
-sysctl -p /etc/sysctl.d/99-ipforward.conf
+# Routage
+echo 1 > /proc/sys/net/ipv4/ip_forward
+for i in all enp0s3 enp0s8 enp0s9; do echo 0 > /proc/sys/net/ipv4/conf/$i/rp_filter; done
+ip route replace default via 10.0.4.2 dev enp0s9
+ip route add 10.33.64.0/20 via 192.168.56.1 dev enp0s3   # retour vers les clients Wi-Fi
+
+# NAT
 nft add table ip nat 2>/dev/null || true
 nft 'add chain ip nat prerouting  { type nat hook prerouting  priority -100; }' 2>/dev/null || true
 nft 'add chain ip nat postrouting { type nat hook postrouting priority  100; }' 2>/dev/null || true
-nft 'add rule ip nat prerouting  iif "enp0s3" tcp dport 80 dnat to 10.10.0.10:80'
-nft 'add rule ip nat postrouting oif "enp0s3" ip saddr 10.10.0.0/24 masquerade'
+
+# DNAT : publier le web derrière le FW (HTTP, et HTTPS si besoin)
+nft 'add rule ip nat prerouting iif "enp0s3" tcp dport 80  dnat to 10.10.0.10:80'
+# nft 'add rule ip nat prerouting iif "enp0s3" tcp dport 443 dnat to 10.10.0.10:443'
+
+# SNAT côté LAN : que le serveur voie la source = 10.10.0.1 (retour garanti)
+nft 'add rule ip nat postrouting oif "enp0s8" ip daddr 10.10.0.10 tcp dport {80,443} snat to 10.10.0.1'
+
+# (Internet sortant du LAN via la carte NAT VB)
+nft 'add rule ip nat postrouting oif "enp0s9" ip saddr 10.10.0.0/24 masquerade'
+
+# Filtrage FORWARD : n’autoriser que HTTP/HTTPS vers le Web
 nft add table ip filter 2>/dev/null || true
 nft 'add chain ip filter forward { type filter hook forward priority 0; policy drop; }' 2>/dev/null || true
 nft 'add rule ip filter forward ct state established,related accept'
-nft 'add rule ip filter forward iif "enp0s3" oif "enp0s8" ip daddr 10.10.0.10 tcp dport 80 ct state new accept'
-nft 'add rule ip filter forward iif "enp0s8" oif "enp0s3" ct state new,established,related accept'
-nft list ruleset | sudo tee /etc/nftables.conf
+nft 'add rule ip filter forward iif "enp0s3" oif "enp0s8" ip daddr 10.10.0.10 tcp dport {80,443} ct state new accept'
+nft 'add rule ip filter forward iif "enp0s8" oif "enp0s9" ct state new,established,related accept'
+nft 'add rule ip filter forward iif "enp0s9" oif "enp0s8" ct state established,related accept'
+
+# Bloquer le ping vers le firewall (durcissement INPUT)
+nft 'add chain ip filter input { type filter hook input priority 0; policy accept; }' 2>/dev/null || true
+nft 'insert rule ip filter input icmp type echo-request drop'
+
+# Persistance
+nft list ruleset > /etc/nftables.conf
 systemctl enable --now nftables
-echo 1 > /proc/sys/net/ipv4/ip_forward
-for i in all enp0s3 enp0s8 enp0s9; do echo 0 > /proc/sys/net/ipv4/conf/$i/rp_filter; done
-nft 'add table ip nat' 2>/dev/null || true
-nft 'add chain ip nat prerouting  { type nat hook prerouting  priority -100; }' 2>/dev/null || true
-nft 'add chain ip nat postrouting { type nat hook postrouting priority  100; }' 2>/dev/null || true 
-nft 'add rule ip nat postrouting oif "enp0s8" ip daddr 10.10.0.10 tcp dport 80 snat to 10.10.0.1'
 ```
+### Test : depuis un autre poste sur le Wi-Fi → http://10.33.79.98/ ✅
 ![test2site](image/test2site.jpg)
 
-## Phase 3 — Analyse & durcissementd
+## Phase 3 — Analyse & durcissement
+
+### Traces & Preuve de passage par le Firewall
+- tcpdump corrélés :
+    - Hôte :
+    ```bash
+    sudo tcpdump -ni wlan0 tcp port 80
+    sudo tcpdump -ni vboxnet0 host 192.168.56.104 and tcp port 80
+    ```
+    - Firewall :
+    ```bash
+    tcpdump -ni enp0s3 tcp port 80
+    tcpdump -ni enp0s8 host 10.10.0.10 and tcp port 80
+    ```
 
 
 nft trace firewall 
