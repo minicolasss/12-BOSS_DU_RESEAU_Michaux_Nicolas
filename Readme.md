@@ -190,10 +190,25 @@ HTTP/1.1 200 OK
 tcpdump: verbose output suppressed, use -v[v]... for full protocol decode
 listening on vboxnet0, link-type EN10MB (Ethernet), snapshot length 262144 bytes
 12:34:08.677267 IP 10.33.72.197.39578 > 192.168.56.104.80: Flags [S], seq 1487376968, win 65535, options [mss 1460,sackOK,TS val 198837030 ecr 0,nop,wscale 10], length 0
+
   sudo tcpdump -ni wlan0 tcp port 80
 tcpdump: verbose output suppressed, use -v[v]... for full protocol decode
 listening on wlan0, link-type EN10MB (Ethernet), snapshot length 262144 bytes
 12:34:08.677184 IP 10.33.72.197.39578 > 10.33.79.98.80: Flags [S], seq 1487376968, win 65535, options [mss 1460,sackOK,TS val 198837030 ecr 0,nop,wscale 10], length 0
+
+root@lsblk2exa:/home/oui# tcpdump -ni enp0s3 tcp port 80
+tcpdump: verbose output suppressed, use -v[v]... for full protocol decode
+listening on enp0s3, link-type EN10MB (Ethernet), snapshot length 262144 bytes
+12:40:58.174467 IP 10.33.72.197.44134 > 192.168.56.104.80: Flags [R.], seq 623342953, ack 2407949979, win 68, options [nop,nop,TS val 199021500 ecr 3881317043], length 0
+12:41:00.430364 IP 10.33.72.197.57014 > 192.168.56.104.80: Flags [S], seq 3533179016, win 65535, options [mss 1460,sackOK,TS val 199023736 ecr 0,nop,wscale 10], length 0
+12:41:00.430996 IP 192.168.56.104.80 > 10.33.72.197.57014: Flags [S.], seq 2608760697, ack 3533179017, win 65160, options [mss 1460,sackOK,TS val 3881351066 ecr 199023736,nop,wscale 7], length 0
+
+root@lsblk2exa:/home/oui# tcpdump -ni enp0s8 host 10.10.0.10 and tcp port 80
+tcpdump: verbose output suppressed, use -v[v]... for full protocol decode
+listening on enp0s8, link-type EN10MB (Ethernet), snapshot length 262144 bytes
+12:41:30.638365 IP 10.10.0.1.57014 > 10.10.0.10.80: Flags [P.], seq 3533180081:3533180699, ack 2608761232, win 67, options [nop,nop,TS val 199030661 ecr 3881351161], length 618: HTTP: GET / HTTP/1.1
+12:41:30.639321 IP 10.10.0.10.80 > 10.10.0.1.57014: Flags [P.], seq 1:175, ack 618, win 498, options [nop,nop,TS val 3881381274 ecr 199030661], length 174: HTTP: HTTP/1.1 304 Not Modified
+12:41:30.650164 IP 10.10.0.1.57014 > 10.10.0.10.80: Flags [.], ack 175, win 68, options [nop,nop,TS val 199030757 ecr 3881381274], length 0
 
 ```
 
